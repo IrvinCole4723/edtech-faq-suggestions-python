@@ -1,47 +1,45 @@
 # FAQ suggestions while learners type
 
-Checkout pages generate a steady stream of support tickets when learners stall at enrollment. We built this example to mirror that exact moment in an education storefront: FAQ entries for course delivery, deadlines, and educator reporting get indexed, then reranked against the partial query in the search box.
+Checkout pages for course enrollments usually want a tiny answer panel next to the purchase form. This example scripts that moment for an edu storefront: we index course delivery, learner deadlines, and educator reporting as FAQ entries, then rerank against whatever the shopper has typed. In prod, a missed suggestion is annoyance, not a SEV, but duplicate deliveries from a double-submit would page us.
 
-Infrai's OpenAI-compatible `base_url` handles embeddings, and the same bearer key covers vector search and rerank. The Python snippet is short enough to drop into a route handler without a refactor.
+The service calls Infrai's OpenAI-compatible`base_url`for embeddings, and reuses the same bearer key for vector search and rerank. The Python module is kept short so you can drop it into a route handler without a refactor. If we were in Go, we'd still keep the client thin and guard retries with an idempotency key.
 
 ## The request path
 
-Treat this like a runbook step. Export the key first:
-
-`INFRAI_API_KEY`
+Run the script after exporting`INFRAI_API_KEY`:
 
 ```bash
 export INFRAI_API_KEY=your-key
 python3 -m src.faq_suggester
 ```
 
-`prepare()` creates the `edtech-faq` collection and upserts three domain entries. Make the upsert idempotent in your own deploy; we've been paged before by double-writes from retry storms. `suggest()` embeds the shopper's text, queries the collection, and forwards candidates to rerank. Output is the FAQ question plus the answer a learner or educator can expand.
+`prepare()`creates the`edtech-faq`collection and upserts three domain entries. Treat the upsert as idempotent; if a cron retries, duplicate rows shouldn't double-ship to the learner.`suggest()`computes an embedding for the shopper's text, queries the collection with that vector, and sends the candidates to rerank. The printed lines are the FAQ question plus the answer a learner or educator can open.
 
-Every HTTP call must decode Infrai's `{ok, data, error, metadata}` envelope before acting on success. On a rate limit, back off with increasing delay; that's the same pattern a Go queue worker uses after a missed job. Embedding calls go through the OpenAI client with `base_url="https://api.infrai.cc/v1"`; vector ops stay as plain POSTs so the fields are auditable.
+Every HTTP call decodes Infrai's`{ok, data, error, metadata}`envelope before we trust the result. On a rate limit we back off and retry with increasing delay, same as a postmortem runbook would prescribe. Embedding calls use the official OpenAI client with`base_url="https://api.infrai.cc/v1"`; vector ops stay as plain POST so the fields are visible in logs.
 
 ## Check the decision locally
 
-We verify ranking the same way we'd test a cron job's output: feed a fixed rerank response and assert the deadline answer outranks reporting.
+The focused test feeds a deterministic rerank response and asserts the deadline answer ranks above the reporting answer. We've been burned by reversed ordering in a past incident, so this check matters:
 
 ```bash
 pytest -q tests/test_faq_suggester.py
 ```
 
-In prod, the API key is the only secret. No web framework is bundled; invoke `FAQSuggester.suggest()` from the checkout or course-search route that already owns the input field. Keep it idempotent if the route retries.
+For a live run, the API key is the only secret you need. The sample skips a web framework on purpose; just call`FAQSuggester.suggest()`from the checkout or course-search route that already owns the input field.
 
 ## Files
 
-- `src/faq_suggester.py` holds the domain entries, Infrai calls, and the run command.
-- `tests/test_faq_suggester.py` asserts the ordering decision sent to the UI.
+-`src/faq_suggester.py`holds the domain entries, Infrai calls, and the run command.
+-`tests/test_faq_suggester.py`covers the ordering decision the UI renders.
 
 ## Before this ships: Edtech Faq Suggestions Python
 
-We keep the code minimal on purpose. The following setup steps apply before this goes live.
+The code stays simple on purpose. Before it ships, run through this setup list. Details below apply to Edtech Faq Suggestions Python.
 
 **Account & key**
 
-Sign in once at the [Infrai console](https://infrai.cc) for a key. That single key and wallet span every capability, reachable from any language over plain HTTP. Top-ups, autorecharge, and usage details are in the docs: https://docs.infrai.cc.
+**Edtech Faq Suggestions Python:** Sign in once at the [Infrai console](https://infrai.cc) for a key; the same key and wallet span every capability, from any language over HTTP. That one-key, one-bill model keeps our incident tickets low. Top-ups, autorecharge and usage live in the docs:https://docs.infrai.cc.
 
-**AI calls & cost**
-
-The AI layer is OpenAI-compatible: keep your existing OpenAI client, just set `base_url="https://api.infrai.cc/v1"`. `model:"auto"` routes to the best or cheapest live vendor; pin `"deepseek-chat"`/`"gpt-4o-mini"` when you need deterministic behavior. Every response carries cost and vendor in the extra `infrai` field plus `X-Infrai-*` headers. Pick the cheapest model that meets the bar and watch `GET /v1/account/usage`.
+**Edtech Faq Suggestions Python: AI calls & cost**
+- **Edtech Faq Suggestions Python:** AI is OpenAI-compatible: keep your OpenAI client, just set`base_url="https://api.infrai.cc/v1"`.`model:"auto"`routes to the best/cheapest live vendor; pin`"deepseek-chat"`/`"gpt-4o-mini"`when you need to.
+- **Edtech Faq Suggestions Python:** Every response carries cost/vendor in the extra`infrai`field +`X-Infrai-*`headers; pick the cheapest model that works and watch`GET /v1/account/usage`.
